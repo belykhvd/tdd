@@ -5,64 +5,51 @@ using System.Linq;
 using NUnit.Framework;
 using NUnit.Framework.Interfaces;
 
+
 namespace TagCloudVisualization
 {
     internal class LayouterTests
     {        
-        private static readonly Random randomGenerator = new Random();
+        private static readonly Random RandomGenerator = new Random();
 
         private static Size GetRandomSize()
         {
-            var randomWidth = randomGenerator.Next(30, 100);
-            var randomHeight = randomGenerator.Next(10, 40);
+            var randomWidth = RandomGenerator.Next(30, 100);
+            var randomHeight = RandomGenerator.Next(10, 40);
             return new Size(randomWidth, randomHeight);
         }
 
-        private static IEnumerable<Rectangle> GenerateLayout(Point center, int rectanglesCount)
-        {            
-            var layouter = new CircularCloudLayouter(center);            
+        private static IEnumerable<Rectangle> GenerateLayout(int rectanglesCount)
+        {                        
             for (var i = 0; i < rectanglesCount; i++)
             {
                 var randomSize = GetRandomSize();
-                var nextRectangle = layouter.PutNextRectangle(randomSize);
+                var nextRectangle = Layouter.PutNextRectangle(randomSize);
                 yield return nextRectangle;                
             }            
         }
 
-        private static readonly Point cloudCenter = new Point(350, 350);
-
+        private static readonly Point CloudCenter = new Point(350, 350);
+        private static readonly CircularCloudLayouter Layouter = new CircularCloudLayouter(CloudCenter);
+        private static readonly List<Rectangle> Layout = GenerateLayout(120).ToList();
+        
         [TearDown]
-        public static void TearDown()
+        public void TearDown()
         {
             if (TestContext.CurrentContext.Result.Outcome.Status != TestStatus.Failed)
                 return;
 
-            var cloudFilename = TestContext.CurrentContext.Test.MethodName + "." + TestContext.CurrentContext.Test.Arguments[0] + ".bmp";
+            var testMethodName = TestContext.CurrentContext.Test.MethodName;
+            var rectanglesCount = (int) TestContext.CurrentContext.Test.Arguments[0];
+            var cloudFilename = $"{testMethodName}.{rectanglesCount}.bmp";
             var cloudDirectory = TestContext.CurrentContext.WorkDirectory;
+            
+            SaveLayoutImage(cloudFilename, GetLayoutSegment(rectanglesCount));
             TestContext.WriteLine($"Tag cloud visualization saved to file {cloudDirectory}\\{cloudFilename}");
         }
 
-        [TestCase(10, TestName = "10 rectangles")]
-        [TestCase(50, TestName = "50 rectangles")]
-        [TestCase(70, TestName = "70 rectangles")]
-        [TestCase(120, TestName = "120 rectangles")]
-        public static void NoIntersectionsTests(int rectanglesCount)
-        {
-            var layout = new List<Rectangle>();            
-            foreach (var nextRectangle in GenerateLayout(cloudCenter, rectanglesCount))
-            {
-                if (layout.Any(rectangle => rectangle.IntersectsWith(nextRectangle)))
-                {
-                    SaveLayoutImage($"{nameof(NoIntersectionsTests)}.{rectanglesCount}.bmp", layout);
-                    Assert.Fail();
-                }
-                layout.Add(nextRectangle);
-            }            
-            Assert.Pass();            
-        }
-
         private static void SaveLayoutImage(string filename, IEnumerable<Rectangle> rectangles)
-        {
+        {           
             var bitmap = new Bitmap(700, 700);
             var graphics = Graphics.FromImage(bitmap);
             graphics.FillRectangle(Brushes.Black, new Rectangle(0, 0, 700, 700));
@@ -70,36 +57,79 @@ namespace TagCloudVisualization
             bitmap.Save(filename);
         }
 
-        [TestCase(10, TestName = "10 rectangles")]
-        [TestCase(50, TestName = "50 rectangles")]
-        [TestCase(70, TestName = "70 rectangles")]
-        [TestCase(120, TestName = "120 rectangles")]
-        public static void CloudLooksLikeCircleTest(int rectanglesCount)
+        [TestCase(0, 1, TestName = "Zero side length")]
+        [TestCase(-1, -1, TestName = "Negative side length")]
+        public void InvalidRectangleSizeTest(int width, int height)
         {
-            var layout = GenerateLayout(cloudCenter, rectanglesCount).ToList();
-            var cloudRadius = (int) GetCloudRadius(layout, cloudCenter);
-            var cloudCircleArea = GetCloudCircleArea(layout, cloudCenter);
+            Assert.Throws<ArgumentException>(() => Layouter.PutNextRectangle(new Size(width, height)));
+        }
+
+        [Test]
+        public void InvalidCenterPointCoordinates()
+        {
+            Assert.Throws<ArgumentException>(() => new CircularCloudLayouter(new Point(-1, -1)));
+        }
+        
+        [Test]
+        public void NoIntersectionsTests()
+        {
+            var assertionResult = Enumerable
+                .Range(1, Layout.Count - 1)
+                .All(i => !Layout[i].IntersectsWith(Layout[i - 1]));
+            Assert.True(assertionResult);
+        }
+
+        private static readonly object[] CommonTestRectanglesCounts = {10, 50, 70, 120};
+
+        private static IEnumerable<TestCaseData> CommonTestCases()
+        {
+            foreach (var count in CommonTestRectanglesCounts)
+            {
+                var testCase = new TestCaseData(count);
+                testCase.SetName($"{count} rectangles");
+                yield return testCase;
+            }                        
+        }
+        
+        [TestCaseSource(nameof(CommonTestCases))]
+        public void CloudLooksLikeCircleTest(int rectanglesCount)
+        {            
+            var cloudRadius = (int) GetCloudRadius(rectanglesCount);
+            var cloudCircleArea = GetCloudCircleArea(rectanglesCount);
             var cloudCirclePartArea = cloudCircleArea / 4;
+
             var cloudPartsRectangles = new[]
             {
-                new Rectangle(cloudCenter.X - cloudRadius, cloudCenter.Y - cloudRadius, cloudRadius, cloudRadius),
-                new Rectangle(cloudCenter.X, cloudCenter.Y - cloudRadius, cloudRadius, cloudRadius),
-                new Rectangle(cloudCenter.X - cloudRadius, cloudCenter.Y, cloudRadius, cloudRadius),
-                new Rectangle(cloudCenter.X, cloudCenter.Y, cloudRadius, cloudRadius)
+                new Rectangle(CloudCenter.X - cloudRadius, CloudCenter.Y - cloudRadius, cloudRadius, cloudRadius),
+                new Rectangle(CloudCenter.X, CloudCenter.Y - cloudRadius, cloudRadius, cloudRadius),
+                new Rectangle(CloudCenter.X - cloudRadius, CloudCenter.Y, cloudRadius, cloudRadius),
+                new Rectangle(CloudCenter.X, CloudCenter.Y, cloudRadius, cloudRadius)
             };
-
-            var cloudPartsAreas = new double[4];
-            for (var i = 0; i < 4; i++)
-            {
-                foreach (var rectangle in layout)                
-                    cloudPartsAreas[i] += GetIntersectionArea(rectangle, cloudPartsRectangles[i]);               
-            }
+            
+            var layoutSegment = GetLayoutSegment(rectanglesCount).ToArray();
+            var cloudPartsAreas = Enumerable
+                .Range(0, 4)
+                .Select(i => layoutSegment.Sum(r => GetIntersectionArea(r, cloudPartsRectangles[i])))
+                .ToArray();            
             var areasRatios = cloudPartsAreas.Select(area => area / cloudCirclePartArea).ToArray();
 
             TestContext.WriteLine("Areas ratios: " + string.Join(" ", areasRatios));
-            var assertionResult = areasRatios.All(ratio => ratio >= 0.25);
-            if (!assertionResult)
-                SaveLayoutImage($"{nameof(CloudLooksLikeCircleTest)}.{rectanglesCount}.bmp", layout);
+
+            var assertionResult = areasRatios.All(ratio => ratio >= 0.25);            
+            Assert.True(assertionResult);
+        }
+
+        [TestCaseSource(nameof(CommonTestCases))]
+        public void DensityTest(int rectanglesCount)
+        {            
+            var cloudCircleArea = GetCloudCircleArea(rectanglesCount);
+            var cloudArea = GetLayoutSegment(rectanglesCount)
+                .Sum(rectangle => rectangle.Width * rectangle.Height);
+            var areasRatio = cloudArea / cloudCircleArea;
+
+            TestContext.WriteLine("Areas ratio: " + areasRatio);
+
+            var assertionResult = areasRatio >= 0.3;            
             Assert.True(assertionResult);
         }
 
@@ -110,35 +140,17 @@ namespace TagCloudVisualization
             return firstCopy.Width * firstCopy.Height;
         }
 
-        [TestCase(10, TestName = "10 rectangles")]
-        [TestCase(50, TestName = "50 rectangles")]
-        [TestCase(70, TestName = "70 rectangles")]
-        [TestCase(120, TestName = "120 rectangles")]
-        public static void DensityTest(int rectanglesCount)
-        {            
-            var layout = GenerateLayout(cloudCenter, rectanglesCount).ToList();
-            var cloudCircleArea = GetCloudCircleArea(layout, cloudCenter);
-            var cloudArea = layout.Sum(rectangle => rectangle.Width * rectangle.Height);
-            var areasRatio = cloudArea / cloudCircleArea;
-
-            TestContext.WriteLine("Areas ratio: " + areasRatio);
-            var assertionResult = areasRatio >= 0.3;
-            if (!assertionResult)
-                SaveLayoutImage($"{nameof(DensityTest)}.{rectanglesCount}.bmp", layout);
-            Assert.True(assertionResult);
-        }
-
-        private static double GetCloudCircleArea(IEnumerable<Rectangle> layout, Point center)
+        private static double GetCloudCircleArea(int rectanglesCount)
         {
-            var cloudRadius = GetCloudRadius(layout, center);
+            var cloudRadius = GetCloudRadius(rectanglesCount);
             return Math.PI * cloudRadius * cloudRadius;
         }
 
-        private static double GetCloudRadius(IEnumerable<Rectangle> layout, Point center)
-        {
-            return layout
+        private static double GetCloudRadius(int rectanglesCount)
+        {            
+            return GetLayoutSegment(rectanglesCount)
                 .SelectMany(GetRectanglePoints)
-                .Max(point => GetDistance(point, center));
+                .Max(point => GetDistance(point, CloudCenter));
         }
 
         private static IEnumerable<Point> GetRectanglePoints(Rectangle rectangle)
@@ -157,6 +169,13 @@ namespace TagCloudVisualization
             var xDelta = first.X - second.X;
             var yDelta = first.Y - second.Y;
             return Math.Sqrt(xDelta * xDelta + yDelta * yDelta);
+        }
+
+        private static IEnumerable<Rectangle> GetLayoutSegment(int rectanglesCount)
+        {
+            return Enumerable
+                .Range(0, rectanglesCount)
+                .Select(i => Layout[i]);
         }
     }
 }

@@ -14,11 +14,17 @@ namespace TagCloudVisualization
         
         public CircularCloudLayouter(Point center)
         {
-            CenterCoordinates = center;
+            if (center.X < 0 || center.Y < 0)
+                throw new ArgumentException("Coordinates of cloud center must be non-negative");
+
+            CenterCoordinates = center;            
         }
 
         public Rectangle PutNextRectangle(Size rectangleSize)
         {
+            if (rectangleSize.Width <= 0 || rectangleSize.Height <= 0)
+                throw new ArgumentException("Invalid size of rectangle: sides lengths must be positive");
+
             Func<double, Point> helixEquasion = t =>
                 new Point(CenterCoordinates.X + (int) (t * Math.Cos(t)),
                     CenterCoordinates.Y + (int) (t * Math.Sin(t)));
