@@ -5,7 +5,6 @@ using System.Linq;
 using NUnit.Framework;
 using NUnit.Framework.Interfaces;
 
-
 namespace TagCloudVisualization
 {
     internal class LayouterTests
